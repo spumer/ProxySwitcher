@@ -50,6 +50,6 @@ class ProxySwitcher:
         import socks.adapters
         return socks.adapters.ChainedProxyHTTPAdapter(chain=self._path)
 
-    def get_opener(self):
+    def get_handler(self):
         import socks.handlers
-        return NotImplemented
+        return socks.handlers.ChainProxyHandler(chain=self._path)
