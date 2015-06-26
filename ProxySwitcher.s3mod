@@ -1,5 +1,5 @@
 ﻿<?xml version="1.0" encoding="UTF-8" ?>
-<bl_module id="824ba69f-351a-460a-b85d-f8f2af76465a" name="ProxySwitcher" responsible="Посохин С.Д." version="1.00">
+<bl_module id="824ba69f-351a-460a-b85d-f8f2af76465a" name="ProxySwitcher" package="common" responsible="Посохин С.Д." version="1.00">
 
   <description/>
 
