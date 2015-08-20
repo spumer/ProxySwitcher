@@ -77,12 +77,12 @@ class Proxies:
             import problems
             from _УтилитыSbis import conn_problem_detector, ConnProblem
 
-            with conn_problem_detector():
-                try:
+            try:
+                with conn_problem_detector():
                     proxies = self.read_url(self.proxies_url)
-                except ConnProblem:
-                    problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
-                    return
+            except ConnProblem:
+                problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
+                return
 
         elif self.proxies_file:
             proxies = self.read_file(self.proxies_file)
