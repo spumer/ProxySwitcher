@@ -6,6 +6,7 @@ import gzip
 import json
 import random
 import datetime
+import threading
 import collections
 import urllib.request
 
@@ -46,6 +47,8 @@ class Proxies:
 
         self.refresh()
         self._last_auto_refresh = datetime.datetime.now()
+
+        self._auto_refresh_lock = threading.Lock()
 
     @classmethod
     def read_string(cls, string, sep=','):
@@ -104,23 +107,25 @@ class Proxies:
 
     def _auto_refresh(self):
         if self.proxies_file:
-            modification_time = datetime.datetime.fromtimestamp(os.stat(self.proxies_file).st_mtime)
+            with self._auto_refresh_lock:
+                modification_time = datetime.datetime.fromtimestamp(os.stat(self.proxies_file).st_mtime)
 
-            if modification_time == self._last_auto_refresh:
-                return
+                if modification_time == self._last_auto_refresh:
+                    return
 
-            self.refresh()
-            self._last_auto_refresh = modification_time
+                self.refresh()
+                self._last_auto_refresh = modification_time
         elif self.proxies_url:
             if self.auto_refresh_period is None:
                 return
 
-            now = datetime.datetime.now()
-            if now - self._last_auto_refresh < self.auto_refresh_period:
-                return
+            with self._auto_refresh_lock:
+                now = datetime.datetime.now()
+                if now - self._last_auto_refresh < self.auto_refresh_period:
+                    return
 
-            self.refresh()
-            self._last_auto_refresh = now
+                self.refresh()
+                self._last_auto_refresh = now
 
     def get_random_address(self):
         self._auto_refresh()
