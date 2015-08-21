@@ -3,11 +3,13 @@
 import os
 import re
 import gzip
+import time
 import json
 import random
 import datetime
 import threading
 import collections
+import urllib.error
 import urllib.request
 
 
@@ -55,10 +57,17 @@ class Proxies:
         return tuple(x for x in map(str.strip, string.split(sep)) if x)
 
     @classmethod
-    def read_url(cls, url, sep='\n', retry=3, timeout=2):
-        from _УтилитыSbis import auto_retry
+    def read_url(cls, url, sep='\n', retry=10, sleep_range=(2, 10), timeout=2):
+        while True:
+            try:
+                resp = urllib.request.urlopen(url, timeout=timeout)
+                break
+            except urllib.error.HTTPError:
+                if not retry:
+                    raise
 
-        resp = auto_retry(retry=retry)(urllib.request.urlopen)(url, timeout=timeout)
+                retry -= 1
+                time.sleep(random.randint(*sleep_range))
 
         content = resp.read()
 
@@ -77,13 +86,10 @@ class Proxies:
 
     def refresh(self):
         if self.proxies_url:
-            import problems
-            from _УтилитыSbis import conn_problem_detector, ConnProblem
-
             try:
-                with conn_problem_detector():
-                    proxies = self.read_url(self.proxies_url)
-            except ConnProblem:
+                proxies = self.read_url(self.proxies_url)
+            except urllib.error.HTTPError:
+                import problems
                 problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
                 return
 
