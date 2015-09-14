@@ -164,7 +164,7 @@ class Proxies:
             option = {"list": ["127.0.0.1:3128"]}
             option = {"list": ["127.0.0.1:3128", "127.0.0.1:9999"]}
             option = {"file": "./my_new_proxies.txt", "type": "socks5"}
-            option = {"url": "http://example.com/get/proxy_list/", "slice": [35, None], "type": "http"}
+            option = {"url": "http://example.com/get/proxy_list/", "slice": [35, null], "type": "http"}
             option = {"url": "http://example.com/get/proxy_list/", "auto_refresh_period": {"days": 1}}
         """
 
