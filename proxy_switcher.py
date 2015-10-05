@@ -48,9 +48,9 @@ class Proxies:
         self.auto_refresh_period = auto_refresh_period
 
         self._last_auto_refresh = None
-        self._auto_refresh()
-
         self._auto_refresh_lock = threading.Lock()
+
+        self._auto_refresh()
 
     @classmethod
     def read_string(cls, string, sep=','):
