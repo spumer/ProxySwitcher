@@ -47,10 +47,8 @@ class Proxies:
         self.force_type = options.get('type')
         self.auto_refresh_period = auto_refresh_period
 
-        self._last_auto_refresh = datetime.datetime.min
+        self._last_auto_refresh = None
         self._auto_refresh_lock = threading.Lock()
-
-        self._auto_refresh()
 
     @classmethod
     def read_string(cls, string, sep=','):
@@ -97,7 +95,7 @@ class Proxies:
             proxies = self.read_file(self.proxies_file)
 
         else:
-            raise NotImplementedError("Update only from external sources")
+            return
 
         if self.slice:
             proxies = proxies[slice(*self.slice)]
@@ -122,13 +120,15 @@ class Proxies:
                 self.refresh()
                 self._last_auto_refresh = modification_time
         elif self.proxies_url:
-            if self.auto_refresh_period is None:
+            if self.auto_refresh_period is None and self._last_auto_refresh is not None:
                 return
 
             with self._auto_refresh_lock:
                 now = datetime.datetime.now()
-                if now - self._last_auto_refresh < self.auto_refresh_period:
-                    return
+
+                if self._last_auto_refresh is not None:
+                    if now - self._last_auto_refresh < self.auto_refresh_period:
+                        return
 
                 self.refresh()
                 self._last_auto_refresh = now
