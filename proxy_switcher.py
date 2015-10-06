@@ -47,7 +47,7 @@ class Proxies:
         self.force_type = options.get('type')
         self.auto_refresh_period = auto_refresh_period
 
-        self._last_auto_refresh = None
+        self._last_auto_refresh = datetime.datetime.min
         self._auto_refresh_lock = threading.Lock()
 
         self._auto_refresh()
