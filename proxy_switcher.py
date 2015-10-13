@@ -39,7 +39,7 @@ class Proxies:
         if auto_refresh_period:
             auto_refresh_period = datetime.timedelta(**auto_refresh_period)
 
-        self.proxies = proxies
+        self._proxies = proxies
         self.proxies_url = proxies_url
         self.proxies_file = proxies_file
 
@@ -49,6 +49,41 @@ class Proxies:
 
         self._last_auto_refresh = None
         self._auto_refresh_lock = threading.Lock()
+
+        self._load_lock = threading.Lock()
+
+    @property
+    def proxies(self):
+        if self._proxies is None:
+            with self._load_lock:
+                # Вышли из состояния гонки, теперь можно удостовериться в реальной необходимости
+                if self._proxies is None:
+                    self._proxies = self._load()
+
+        return self._proxies
+
+    def _load(self):
+        if self.proxies_url:
+            proxies = self.read_url(self.proxies_url)
+        elif self.proxies_file:
+            proxies = self.read_file(self.proxies_file)
+        else:
+            raise NotImplementedError(
+                "Can't load proxies: "
+                "please specify one of the sources ('proxies_url' or 'proxies_file')"
+            )
+
+        if self.slice:
+            proxies = proxies[slice(*self.slice)]
+
+        if self.force_type:
+            new_type = self.force_type + '://'  # `socks` format
+            proxies = tuple(
+                re.sub(r'^(?:(.*?)://)?', new_type, proxy)
+                for proxy in proxies
+            )
+
+        return proxies
 
     @classmethod
     def read_string(cls, string, sep=','):
@@ -83,31 +118,15 @@ class Proxies:
             return cls.read_string(f.read(), sep=sep)
 
     def refresh(self):
-        if self.proxies_url:
-            try:
-                proxies = self.read_url(self.proxies_url)
-            except urllib.error.HTTPError:
-                import problems
-                problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
-                return
-
-        elif self.proxies_file:
-            proxies = self.read_file(self.proxies_file)
-
-        else:
+        if not self.proxies_url and not self.proxies_file:
             return
 
-        if self.slice:
-            proxies = proxies[slice(*self.slice)]
-
-        if self.force_type:
-            new_type = self.force_type + '://'  # `socks` format
-            proxies = tuple(
-                re.sub(r'^(?:(.*?)://)?', new_type, proxy)
-                for proxy in proxies
-            )
-
-        self.proxies = proxies
+        try:
+            self._proxies = self._load()
+        except urllib.error.HTTPError:
+            import problems
+            problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
+            return
 
     def _auto_refresh(self):
         if self.proxies_file:
@@ -120,7 +139,7 @@ class Proxies:
                 self.refresh()
                 self._last_auto_refresh = modification_time
         elif self.proxies_url:
-            if self.auto_refresh_period is None and self._last_auto_refresh is not None:
+            if self.auto_refresh_period is None:
                 return
 
             with self._auto_refresh_lock:
