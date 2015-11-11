@@ -154,9 +154,7 @@ class Proxies:
 
     def get_random_address(self):
         self._auto_refresh()
-        return self.proxies[
-            random.randint(1, len(self.proxies)) - 1
-        ]
+        return random.choice(self.proxies)
 
     @classmethod
     def from_cfg_string(cls, cfg_string):
