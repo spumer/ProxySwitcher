@@ -238,3 +238,29 @@ class Chain:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
+
+
+class RequestsClient:
+    default_headers = None
+
+    def __init__(self, proxy_chain=None):
+        self.proxy_chain = proxy_chain
+        self.session = self._new_sess()
+
+    def _new_sess(self):
+        import requests
+
+        session = requests.Session()
+        session.headers.update(self.default_headers)
+        if self.proxy_chain:
+            self.proxy_chain.wrap_session(session)
+
+        return session
+
+    def switch_session(self):
+        if self.proxy_chain:
+            self.proxy_chain.switch()
+
+        old_session = self.session
+        self.session = self._new_sess()
+        old_session.close()
