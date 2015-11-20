@@ -239,6 +239,18 @@ class Chain:
         session.mount('https://', adapter)
         return session
 
+    @classmethod
+    def from_config(cls, cfg):
+        proxy_cfg_string = cfg.get('Прокси')
+
+        if proxy_cfg_string is None:
+            return None
+
+        proxy_gw = cfg.get('Шлюз')
+        proxies = Proxies.from_cfg_string(proxy_cfg_string)
+
+        return cls(proxies, proxy_gw=proxy_gw)
+
 
 class RequestsClient:
     default_headers = None
@@ -265,3 +277,4 @@ class RequestsClient:
         old_session = self.session
         self.session = self._new_sess()
         old_session.close()
+
