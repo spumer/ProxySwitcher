@@ -263,7 +263,8 @@ class RequestsClient:
         import requests
 
         session = requests.Session()
-        session.headers.update(self.default_headers)
+        if self.default_headers is not None:
+            session.headers.update(self.default_headers)
         if self.proxy_chain:
             self.proxy_chain.wrap_session(session)
 
