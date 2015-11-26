@@ -5,6 +5,7 @@ import re
 import gzip
 import time
 import json
+import socket
 import random
 import datetime
 import threading
@@ -95,7 +96,7 @@ class Proxies:
             try:
                 resp = urllib.request.urlopen(url, timeout=timeout)
                 break
-            except urllib.error.HTTPError:
+            except (urllib.error.HTTPError, socket.timeout):
                 if not retry:
                     raise
 
