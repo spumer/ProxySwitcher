@@ -8,6 +8,7 @@ import json
 import socket
 import random
 import datetime
+import functools
 import threading
 import collections
 import urllib.error
@@ -239,6 +240,16 @@ class Chain:
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
+
+    def wrap_module(self, module):
+        """
+        Attempts to replace a module's socket library with a SOCKS socket.
+        This will only work on modules that import socket directly into the
+        namespace; most of the Python Standard Library falls into this category.
+        """
+        import socks
+        routes = socks.RoutingTable.from_addresses(self._path)
+        module.socket.socket = functools.partial(socks.socksocket, routes=routes)
 
     @classmethod
     def from_config(cls, cfg):
