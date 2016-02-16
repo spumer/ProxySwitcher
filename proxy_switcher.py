@@ -264,12 +264,21 @@ class Chain:
         return cls(proxies, proxy_gw=proxy_gw)
 
 
-class RequestsClient:
-    default_headers = None
+class _RequestsClient:
+    def __init__(self, proxy_chain=None, default_headers=None):
+        default_headers_ = self._make_default_headers()
+        if default_headers is not None:
+            default_headers_.update(default_headers)
 
-    def __init__(self, proxy_chain=None):
         self.proxy_chain = proxy_chain
+        self.default_headers = default_headers_
+
         self.session = self._new_sess()
+
+    def _make_default_headers(self):
+        return {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0',
+        }
 
     def _new_sess(self):
         import requests
@@ -289,3 +298,43 @@ class RequestsClient:
         old_session = self.session
         self.session = self._new_sess()
         old_session.close()
+
+
+class Client(_RequestsClient):
+    def __init__(
+        self, ssl_verify=True, timeout=10, apparent_encoding=None,
+        raise_for_conn_problem=True, **kw
+    ):
+        super().__init__(**kw)
+
+        self.ssl_verify = ssl_verify
+        self.timeout = timeout
+        self.apparent_encoding = apparent_encoding
+        self.raise_for_conn_problem = raise_for_conn_problem
+
+    def _setdefault_resp_encoding(self, resp):
+        if resp.encoding is None:
+            resp.encoding = self.apparent_encoding
+
+    def _update_params_defaults(self, params):
+        params.setdefault('timeout', self.timeout)
+        params.setdefault('verify', self.ssl_verify)
+
+    def request(self, method, url, **kw):
+        from _УтилитыSbis import conn_problem_detector
+
+        self._update_params_defaults(kw)
+
+        with conn_problem_detector():
+            resp = self.session.request(method, url, **kw)
+            if self.raise_for_conn_problem:
+                resp.raise_for_status()
+
+        self._setdefault_resp_encoding(resp)
+        return resp
+
+    def get(self, url, **kw):
+        return self.request('GET', url, **kw)
+
+    def post(self, url, **kw):
+        return self.request('POST', url, **kw)
