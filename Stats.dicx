@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="WINDOWS-1251" ?>
+<dictionary dicx_version="1.22">
+
+  <table last_changed="Посохин С.Д." name="_proxy_switcher_log" personal_data="0" responsible="Посохин С.Д." table_ignore_convert="0" table_logged="0" table_partitioned="0" unlogged_table="0">
+    <column name="____SBIS_PRIMARY_KEY_FIELD____">
+      <format>
+        <type>IDENTIFIER</type>
+        <max_size>8</max_size>
+      </format>
+    </column>
+    <column name="thread">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="session">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="method">
+      <format>
+        <type>STRING</type>
+        <max_size>16</max_size>
+      </format>
+    </column>
+    <column name="hostname">
+      <format>
+        <type>STRING</type>
+        <max_size>64</max_size>
+      </format>
+    </column>
+    <column name="url">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="query">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="data">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="headers">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="ret_code">
+      <format>
+        <type>INT16</type>
+      </format>
+    </column>
+    <column name="exc_type">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="exc_msg">
+      <format>
+        <type>TEXT</type>
+      </format>
+    </column>
+    <column name="proxy">
+      <format>
+        <type>STRING</type>
+        <max_size>24</max_size>
+      </format>
+    </column>
+    <column name="created_at">
+      <format>
+        <not_null>1</not_null>
+        <type>DATETIME</type>
+        <use_current>1</use_current>
+      </format>
+    </column>
+    <column name="switch">
+      <format>
+        <not_null>1</not_null>
+        <default>0</default>
+        <type>BOOLEAN</type>
+      </format>
+    </column>
+    <index method="btree" name="hostname" null_keys="1" service="0" unique="0">
+      <column is_expressions="0" name="hostname" nulls_place="LAST" sorting="ASC"/>
+    </index>
+    <index method="btree" name="thread" null_keys="1" service="0" unique="0">
+      <column is_expressions="0" name="thread" nulls_place="LAST" sorting="ASC"/>
+    </index>
+    <index method="btree" name="session" null_keys="1" service="0" unique="0">
+      <column is_expressions="0" name="session" nulls_place="DEFAULT" sorting="ASC"/>
+    </index>
+    <index method="btree" name="proxy" null_keys="1" service="0" unique="0">
+      <column is_expressions="0" name="proxy" nulls_place="LAST" sorting="ASC"/>
+    </index>
+    <trigger_list/>
+  </table>
+
+</dictionary>
