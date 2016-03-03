@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import types
 import logging
 import datetime
 import threading
@@ -66,24 +67,6 @@ class Event:
         return exc_matcher.get_fqn(exc_type), exc_msg
 
     @staticmethod
-    def _prepare_headers(request_headers=None, session_headers=None):
-        if session_headers is None:
-            return request_headers
-
-        if request_headers is None:
-            return session_headers
-
-        merged_headers = dict(session_headers.items())
-        merged_headers.update(request_headers)
-
-        # sort headers by header lower name
-        return collections.OrderedDict(
-            (name.title(), value)
-            for name, value in sorted(merged_headers.items(), key=lambda x: x[0].lower())
-            if value is not None
-        )
-
-    @staticmethod
     def _extract_session_proxy_addr(session, scheme):
         adapter = session.adapters.get(scheme + '://')
         if adapter is None or not isinstance(adapter, socks.adapters.ChainedProxyHTTPAdapter):
@@ -106,13 +89,12 @@ class Event:
 
     @classmethod
     def from_partial(
-        cls, session, method, url, data=None, request_headers=None,
+        cls, session, method, url, data=None, headers=None,
         ret_code=None, exc_type=None, exc_msg=None,
         created_at=None, switch=False, exc_info=None, **kw
     ):
         thread_ident = get_current_thread_ident()
 
-        headers = cls._prepare_headers(request_headers, session.headers) or None
         if headers is not None:
             headers = str(headers)
 
@@ -178,3 +160,27 @@ class Event:
     def create_async(self):
         fut = self._executor.submit(self.create)
         fut.add_done_callback(self.log_future_exception)
+
+
+def add_session_send_logging(session, log=None):
+    def _wrap_send(self, request, **kw):
+        exc_info = None
+        ret_code = None
+
+        try:
+            resp = self.__send_orig(request, **kw)
+            ret_code = resp.status_code
+            return resp
+        except:
+            exc_info = sys.exc_info()
+            raise
+        finally:
+            event = Event.from_partial(
+                self, request.method, request.url, request.body, request.headers, ret_code, exc_info=exc_info,
+                log=log,
+            )
+            event.create_async()
+            self.__last_request_event = event
+
+    session.__send_orig = session.send
+    session.send = types.MethodType(_wrap_send, session)

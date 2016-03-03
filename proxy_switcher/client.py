@@ -53,7 +53,9 @@ class Client(_RequestsClient):
         self._request_logging = request_logging
         self._log = log
 
-        self._log_session_start()
+        if self._request_logging:
+            stats.add_session_send_logging(self.session, log=self._log)
+            self._log_session_start()
 
     def _setdefault_resp_encoding(self, resp):
         if resp.encoding is None:
@@ -72,13 +74,18 @@ class Client(_RequestsClient):
             )
 
     def switch_session(self):
-        if self._request_logging:
-            event = getattr(self.session, '__last_request_event', None)
-            if event is not None:
-                event.replace(switch=True)
-                event.update_async()
+        if not self._request_logging:
+            super().switch_session()
+            return
+
+        event = getattr(self.session, '__last_request_event', None)
+        if event is not None:
+            event.replace(switch=True)
+            event.update_async()
 
         super().switch_session()
+
+        stats.add_session_send_logging(self.session, log=self._log)
         self._log_session_start()
 
     def request(self, method, url, headers=None, data=None, **kw):
@@ -86,27 +93,12 @@ class Client(_RequestsClient):
 
         self._update_params_defaults(kw)
 
-        exc_info = None
-        ret_code = None
-        try:
-            with conn_problem_detector():
-                resp = self.session.request(
-                    method, url, headers=headers, data=data, **kw
-                )
-                ret_code = resp.status_code
-                if self.raise_for_conn_problem:
-                    resp.raise_for_status()
-        except:
-            exc_info = sys.exc_info()
-            raise
-        finally:
-            if self._request_logging:
-                event = stats.Event.from_partial(
-                    self.session, method, url, data, headers, ret_code, exc_info=exc_info,
-                    log=self._log,
-                )
-                event.create_async()
-                self.session.__last_request_event = event
+        with conn_problem_detector():
+            resp = self.session.request(
+                method, url, headers=headers, data=data, **kw
+            )
+            if self.raise_for_conn_problem:
+                resp.raise_for_status()
 
         self._setdefault_resp_encoding(resp)
         return resp
