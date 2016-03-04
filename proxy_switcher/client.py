@@ -44,18 +44,30 @@ class Client(_RequestsClient):
         self, ssl_verify=True, timeout=10, apparent_encoding=None,
         raise_for_conn_problem=True, request_logging=True, log=None, **kw
     ):
+        # _new_sess override require
+        self._request_logging = request_logging
+        self._log = log
+
         super().__init__(**kw)
 
         self.ssl_verify = ssl_verify
         self.timeout = timeout
         self.apparent_encoding = apparent_encoding
         self.raise_for_conn_problem = raise_for_conn_problem
-        self._request_logging = request_logging
-        self._log = log
+
+    def _new_sess(self):
+        session = super()._new_sess()
 
         if self._request_logging:
-            stats.add_session_send_logging(self.session, log=self._log)
-            self._log_session_start()
+            stats.add_session_send_logging(session, log=self._log)
+            if self._log is not None:
+                self._log.info(
+                    "New session started: session=%r" % stats.get_session_ident(
+                        session
+                    )
+                )
+
+        return session
 
     def _setdefault_resp_encoding(self, resp):
         if resp.encoding is None:
@@ -65,28 +77,14 @@ class Client(_RequestsClient):
         params.setdefault('timeout', self.timeout)
         params.setdefault('verify', self.ssl_verify)
 
-    def _log_session_start(self):
-        if self._log is not None:
-            self._log.info(
-                "New session started: session=%r" % stats.get_session_ident(
-                    self.session
-                )
-            )
-
     def switch_session(self):
-        if not self._request_logging:
-            super().switch_session()
-            return
-
-        event = getattr(self.session, '__last_request_event', None)
-        if event is not None:
-            event.replace(switch=True)
-            event.update_async()
+        if self._request_logging:
+            event = getattr(self.session, '__last_request_event', None)
+            if event is not None:
+                event.replace(switch=True)
+                event.update_async()
 
         super().switch_session()
-
-        stats.add_session_send_logging(self.session, log=self._log)
-        self._log_session_start()
 
     def request(self, method, url, headers=None, data=None, **kw):
         from _УтилитыSbis import conn_problem_detector
