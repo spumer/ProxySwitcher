@@ -166,18 +166,26 @@ def add_session_send_logging(session, log=None):
     def _wrap_send(self, request, **kw):
         exc_info = None
         ret_code = None
+        created_at = datetime.datetime.now()
 
         try:
             resp = self.__send_orig(request, **kw)
-            ret_code = resp.status_code
+            if resp.history:
+                # Были перенаправления
+                # Оригинальный запрос расположен в начале истории
+                # Остальные мы уже зарегистрировали
+                ret_code = resp.history[0].status_code
+            else:
+                ret_code = resp.status_code
+
             return resp
         except:
             exc_info = sys.exc_info()
             raise
         finally:
             event = Event.from_partial(
-                self, request.method, request.url, request.body, request.headers, ret_code, exc_info=exc_info,
-                log=log,
+                self, request.method, request.url, request.body, request.headers, ret_code,
+                created_at=created_at, exc_info=exc_info, log=log,
             )
             event.create_async()
             self.__last_request_event = event
