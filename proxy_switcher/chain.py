@@ -13,13 +13,32 @@ import threading
 import collections
 import urllib.error
 import urllib.request
+import collections.abc
 
 
 class ProxyURLRefreshError(Exception):
     pass
 
 
-class Proxies:
+class AliveProxiesNotFound(Exception):
+    pass
+
+
+class NoFreeProxies(Exception):
+    pass
+
+
+def _get_missing(target, source):
+    """Возвращает присутствующие в `target`, но отсутствующие в `source` элементы
+    """
+
+    old_target = set(target)
+    new_target = old_target.intersection(source)
+
+    return old_target.difference(new_target)
+
+
+class Proxies(collections.abc.Sequence):
     def __init__(
         self,
         proxies=None,
@@ -34,12 +53,21 @@ class Proxies:
         @param options: доп. параметры
         """
 
+        if proxies is not None:
+            proxies = list(proxies)
+
         if options is None:
             options = {}
 
         auto_refresh_period = options.get('auto_refresh_period')
         if auto_refresh_period:
             auto_refresh_period = datetime.timedelta(**auto_refresh_period)
+
+        blacklist_filename = options.get('blacklist')
+        if blacklist_filename:
+            blacklist = Blacklist.from_file(filename=blacklist_filename, missing_ok=True, auto_save=True)
+        else:
+            blacklist = Blacklist()
 
         self._proxies = proxies
         self.proxies_url = proxies_url
@@ -49,10 +77,15 @@ class Proxies:
         self.force_type = options.get('type')
         self.auto_refresh_period = auto_refresh_period
 
+        self._blacklist = blacklist
+
         self._last_auto_refresh = None
         self._auto_refresh_lock = threading.Lock()
 
         self._load_lock = threading.Lock()
+        self._modified_at = time.perf_counter()
+
+        self._pool = _Pool(self)
 
     @property
     def proxies(self):
@@ -61,8 +94,17 @@ class Proxies:
                 # Вышли из состояния гонки, теперь можно удостовериться в реальной необходимости
                 if self._proxies is None:
                     self._proxies = self._load()
+                    self._modified_at = time.perf_counter()
 
         return self._proxies
+
+    def __getitem__(self, item):
+        self._auto_refresh()
+        return self.proxies[item]
+
+    def __len__(self):
+        self._auto_refresh()
+        return len(self.proxies)
 
     def _load(self):
         if self.proxies_url:
@@ -80,16 +122,22 @@ class Proxies:
 
         if self.force_type:
             new_type = self.force_type + '://'  # `socks` format
-            proxies = tuple(
+            proxies = [
                 re.sub(r'^(?:(.*?)://)?', new_type, proxy)
                 for proxy in proxies
-            )
+            ]
+
+        if self._blacklist:
+            for proxy in _get_missing(self._blacklist, proxies):
+                self._blacklist.discard(proxy)
+
+            proxies = [p for p in proxies if p not in self._blacklist]
 
         return proxies
 
     @classmethod
     def read_string(cls, string, sep=','):
-        return tuple(x for x in map(str.strip, string.split(sep)) if x)
+        return list(x for x in map(str.strip, string.split(sep)) if x)
 
     @classmethod
     def read_url(cls, url, sep='\n', retry=10, sleep_range=(2, 10), timeout=2):
@@ -128,7 +176,8 @@ class Proxies:
         except urllib.error.HTTPError:
             import problems
             problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
-            return
+        else:
+            self._modified_at = time.perf_counter()
 
     def _auto_refresh(self):
         if self.proxies_file:
@@ -154,14 +203,41 @@ class Proxies:
                 self.refresh()
                 self._last_auto_refresh = now
 
+    def add_to_blacklist(self, proxy):
+        with self._load_lock:
+            if proxy in self.proxies:
+                self._blacklist.append(proxy)
+                self.proxies.remove(proxy)
+                self._modified_at = time.perf_counter()
+
+    def remove_from_blacklist(self, proxy):
+        with self._load_lock:
+            if proxy in self._blacklist:
+                self._blacklist.discard(proxy)
+                self.proxies.append(proxy)
+                self._modified_at = time.perf_counter()
+
     def get_random_address(self):
         self._auto_refresh()
-        return random.choice(self.proxies)
+        proxies = self.proxies
+
+        if not proxies:
+            # Все прокси забанены, возвращаем самый старый из блеклиста. Возможно бан снят.
+            # Мы не можем убрать его из блеклиста, тк он станет единственным доступным адресом
+            # Что может вызвать проблемы при многопоточной работе
+            # (возможен мгновенный повторный бан, если адрес получат все потоки)
+            proxy = self._blacklist.popleft()
+            self._blacklist.append(proxy)
+            return proxy
+
+        return random.choice(proxies)
+
+    def get_pool(self):
+        return self._pool
 
     @classmethod
     def from_cfg_string(cls, cfg_string):
-        """Возвращает список прокси как и `from_src`,
-        с тем исключением что список опций берется автоматически.
+        """Возвращает список прокси с тем исключением что список опций берется автоматически.
 
         Формат: json
 
@@ -198,6 +274,124 @@ class Proxies:
         )
 
 
+class _Pool:
+    def __init__(self, proxies: "`Proxies` instance"):
+        self._used = set()
+        self._cooling_down = {}
+        self._cond = threading.Condition()
+
+        # более оптимальный способ заполнения, используется только для инициализации
+        self._free = collections.deque(proxies.proxies)
+
+        self._proxies = proxies
+        self._proxies_modified_at = proxies._modified_at
+
+    @property
+    def _size(self):
+        return len(self._free) + len(self._used) + len(self._cooling_down)
+
+    def _cool_released(self):
+        now = time.perf_counter()
+
+        cooled = []
+
+        for proxy, holdout in self._cooling_down.items():
+            if now >= holdout:
+                cooled.append(proxy)
+
+        for proxy in cooled:
+            self._cooling_down.pop(proxy)
+            self._free.append(proxy)
+
+    def _is_proxies_changed(self):
+        return self._proxies._modified_at != self._proxies_modified_at
+
+    def _remove_outdated(self):
+        # список прокси изменился, оставляем только актуальные
+
+        proxies = set(self._proxies)
+
+        old_free = set(self._free)
+        new_free = old_free.intersection(proxies)
+
+        if old_free.difference(new_free):
+            self._free.clear()
+            self._free.extend(new_free)
+
+        for proxy in _get_missing(self._cooling_down, proxies):
+            self._cooling_down.pop(proxy)
+
+        for proxy in _get_missing(self._used, proxies):
+            self._used.remove(proxy)
+
+    def acquire(self, timeout=None):
+        start = time.perf_counter()
+
+        with self._cond:
+            while True:
+                if self._is_proxies_changed():
+                    self._remove_outdated()
+
+                self._cool_released()
+
+                if self._free:
+                    proxy = self._free.popleft()
+                    self._used.add(proxy)
+                    return proxy
+
+                if self._proxies._blacklist:
+                    # Возвращаем самый старый из блеклиста. Возможно бан снят.
+                    # Не убираем из блеклиста, чтобы не нарушать консистентности объекта self._proxies
+
+                    proxy = next((
+                        p for p in self._proxies._blacklist
+                        if p not in self._cooling_down
+                    ), None)
+
+                    if proxy is not None:
+                        self._proxies.remove_from_blacklist(proxy)
+                        self._used.add(proxy)
+                        return proxy
+                    else:
+                        # Все прокси из блеклиста находятся на охлаждении
+                        pass
+
+                if self._cooling_down:
+                    self._cond.wait(1)
+                else:
+                    self._cond.wait(timeout)
+
+                if timeout is not None:
+                    if time.perf_counter() - start > timeout:
+                        raise NoFreeProxies
+
+    def release(self, proxy, bad=False, holdout=None):
+        """Возвращает прокси в пул
+
+        @param proxy: прокси
+        @param holdout (сек): None - вернуть сразу, иначе прокси не будет использован до истечения указанного интервала
+        """
+        with self._cond:
+            is_outdated = proxy not in self._used
+            self._used.discard(proxy)
+
+            if is_outdated:
+                # Скорее всего прокси уже не актуален
+                # И был удален из списка
+                return
+
+            if bad:
+                self._proxies.add_to_blacklist(proxy)
+                self._cond.notify()
+                return
+
+            if holdout is None:
+                self._free.append(proxy)
+                self._cond.notify()
+            else:
+                self._cooling_down[proxy] = time.perf_counter() + holdout
+
+
 class Chain:
     """
     Не является потокобезопасным.
@@ -210,22 +404,31 @@ class Chain:
          (все запросы к другим прокси-серверам будут проходить через него)
         """
 
-        if isinstance(proxies, collections.Sequence):
+        if not isinstance(proxies, Proxies) and isinstance(proxies, collections.Sequence):
             proxies = Proxies(proxies)
 
         self.proxies = proxies
         self.proxy_gw = proxy_gw
 
-        self._path = []
-        self.switch()
+        self._proxies_pool = self.proxies.get_pool()
+        self._path = self._build_path(self._proxies_pool.acquire())
 
-    def switch(self):
-        self._path.clear()
+    def __del__(self):
+        self._proxies_pool.release(self._path[-1])
+
+    def _build_path(self, proxy):
+        path = []
 
         if self.proxy_gw:
-            self._path.append(self.proxy_gw)
+            path.append(self.proxy_gw)
 
-        self._path.append(self.proxies.get_random_address())
+        path.append(proxy)
+
+        return path
+
+    def switch(self, bad=False, holdout=None):
+        self._proxies_pool.release(self._path[-1], bad=bad, holdout=holdout)
+        self._path = self._build_path(self._proxies_pool.acquire())
 
     def get_adapter(self):
         import socks.adapters
@@ -264,77 +467,96 @@ class Chain:
         return cls(proxies, proxy_gw=proxy_gw)
 
 
-class _RequestsClient:
-    def __init__(self, proxy_chain=None, default_headers=None):
-        default_headers_ = self._make_default_headers()
-        if default_headers is not None:
-            default_headers_.update(default_headers)
+class Blacklist(
+    collections.abc.Container,
+    collections.abc.Iterable,
+    collections.abc.Sized,
+):
+    _missing = object()
 
-        self.proxy_chain = proxy_chain
-        self.default_headers = default_headers_
+    def __init__(self, sequence=None, filename=None, auto_save=False):
+        self._filename = filename
+        self._auto_save = auto_save
 
-        self.session = self._new_sess()
+        self._blacklist = collections.OrderedDict.fromkeys(sequence or ())
+        self._access_lock = threading.RLock()
 
-    def _make_default_headers(self):
-        return {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; WOW64; rv:40.0) Gecko/20100101 Firefox/40.0',
-        }
+    def __contains__(self, item):
+        return item in self._blacklist
 
-    def _new_sess(self):
-        import requests
+    def __iter__(self):
+        return iter(self._blacklist)
 
-        session = requests.Session()
-        if self.default_headers is not None:
-            session.headers.update(self.default_headers)
-        if self.proxy_chain:
-            self.proxy_chain.wrap_session(session)
+    def __reversed__(self):
+        return reversed(self._blacklist)
 
-        return session
+    def __len__(self):
+        return len(self._blacklist)
 
-    def switch_session(self):
-        if self.proxy_chain:
-            self.proxy_chain.switch()
+    def __bool__(self):
+        return len(self) != 0
 
-        old_session = self.session
-        self.session = self._new_sess()
-        old_session.close()
+    def _do_auto_save(self):
+        if not self._auto_save:
+            return
 
+        if self._filename is None:
+            raise RuntimeError("You must specify filename for autosave feature!")
 
-class Client(_RequestsClient):
-    def __init__(
-        self, ssl_verify=True, timeout=10, apparent_encoding=None,
-        raise_for_conn_problem=True, **kw
-    ):
-        super().__init__(**kw)
+        self.save(self._filename)
 
-        self.ssl_verify = ssl_verify
-        self.timeout = timeout
-        self.apparent_encoding = apparent_encoding
-        self.raise_for_conn_problem = raise_for_conn_problem
+    def clear(self):
+        self._blacklist.clear()
+        self._do_auto_save()
 
-    def _setdefault_resp_encoding(self, resp):
-        if resp.encoding is None:
-            resp.encoding = self.apparent_encoding
+    def append(self, value):
+        """Добавляет элемент в конец списка
+        Если он уже есть в нем, то переносит в конец
+        """
 
-    def _update_params_defaults(self, params):
-        params.setdefault('timeout', self.timeout)
-        params.setdefault('verify', self.ssl_verify)
+        with self._access_lock:
+            if value in self._blacklist:
+                self._blacklist.move_to_end(value)
+            else:
+                self._blacklist[value] = None
 
-    def request(self, method, url, **kw):
-        from _УтилитыSbis import conn_problem_detector
+            self._do_auto_save()
 
-        self._update_params_defaults(kw)
+    def discard(self, value):
+        with self._access_lock:
+            self._blacklist.pop(value, None)
+            self._do_auto_save()
 
-        with conn_problem_detector():
-            resp = self.session.request(method, url, **kw)
-            if self.raise_for_conn_problem:
-                resp.raise_for_status()
+    def pop(self):
+        with self._access_lock:
+            k, v = self._blacklist.popitem()
+            self._do_auto_save()
+            return k
 
-        self._setdefault_resp_encoding(resp)
-        return resp
+    def popleft(self):
+        with self._access_lock:
+            k, v = self._blacklist.popitem(last=False)
+            self._do_auto_save()
+            return k
 
-    def get(self, url, **kw):
-        return self.request('GET', url, **kw)
+    def save(self, filename):
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
 
-    def post(self, url, **kw):
-        return self.request('POST', url, **kw)
+        with self._access_lock:
+            with open(filename, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(self._blacklist))
+
+    def read(self, filename, missing_ok=False):
+        try:
+            with self._access_lock:
+                with open(filename, encoding='utf-8') as f:
+                    self._blacklist = collections.OrderedDict.fromkeys(x.strip() for x in f)
+        except FileNotFoundError:
+            if not missing_ok:
+                raise
+
+    @classmethod
+    def from_file(cls, filename, missing_ok=False, **kw):
+        obj = cls(filename=filename, **kw)
+        obj.read(filename, missing_ok=missing_ok)
+        return obj
