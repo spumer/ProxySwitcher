@@ -1,5 +1,3 @@
-import sys
-
 from . import stats
 
 
@@ -30,9 +28,9 @@ class _RequestsClient:
 
         return session
 
-    def switch_session(self):
+    def switch_session(self, bad=False, holdout=None):
         if self.proxy_chain:
-            self.proxy_chain.switch()
+            self.proxy_chain.switch(bad=bad, holdout=holdout)
 
         old_session = self.session
         self.session = self._new_sess()
@@ -77,14 +75,14 @@ class Client(_RequestsClient):
         params.setdefault('timeout', self.timeout)
         params.setdefault('verify', self.ssl_verify)
 
-    def switch_session(self):
+    def switch_session(self, bad=False, holdout=None):
         if self._request_logging:
             event = getattr(self.session, '__last_request_event', None)
             if event is not None:
                 event.replace(switch=True)
                 event.update_async()
 
-        super().switch_session()
+        super().switch_session(bad=bad, holdout=holdout)
 
     def request(self, method, url, headers=None, data=None, **kw):
         from _УтилитыSbis import conn_problem_detector
