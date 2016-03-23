@@ -85,7 +85,7 @@ class Proxies(collections.abc.Sequence):
         self._load_lock = threading.Lock()
         self._modified_at = time.perf_counter()
 
-        self._pool = _Pool(self)
+        self.__pool = None
 
     @property
     def proxies(self):
@@ -233,7 +233,9 @@ class Proxies(collections.abc.Sequence):
         return random.choice(proxies)
 
     def get_pool(self):
-        return self._pool
+        if self.__pool is None:
+            self.__pool = _Pool(self)
+        return self.__pool
 
     @classmethod
     def from_cfg_string(cls, cfg_string):
@@ -309,20 +311,24 @@ class _Pool:
     def _remove_outdated(self):
         # список прокси изменился, оставляем только актуальные
 
-        proxies = set(self._proxies)
+        whitelist = set(self._proxies)
+        full_list = whitelist.union(self._proxies._blacklist)
 
         old_free = set(self._free)
-        new_free = old_free.intersection(proxies)
+        new_free = old_free.intersection(whitelist)
 
         if old_free.difference(new_free):
             self._free.clear()
             self._free.extend(new_free)
 
-        for proxy in _get_missing(self._cooling_down, proxies):
+        # на охлаждении могут находиться как прокси из обычного списка, так и из черного
+        for proxy in _get_missing(self._cooling_down, full_list):
             self._cooling_down.pop(proxy)
 
-        for proxy in _get_missing(self._used, proxies):
+        for proxy in _get_missing(self._used, full_list):
             self._used.remove(proxy)
+
+        self._proxies_modified_at = self._proxies._modified_at
 
     def acquire(self, timeout=None):
         start = time.perf_counter()
@@ -373,23 +379,22 @@ class _Pool:
         """
         with self._cond:
             is_outdated = proxy not in self._used
-            self._used.discard(proxy)
+            self._used.remove(proxy)
 
             if is_outdated:
                 # Скорее всего прокси уже не актуален
                 # И был удален из списка
                 return
 
+            if holdout is not None:
+                self._cooling_down[proxy] = time.perf_counter() + holdout
+
             if bad:
                 self._proxies.add_to_blacklist(proxy)
-                self._cond.notify()
-                return
-
-            if holdout is None:
+            elif holdout is None:
+                # прокси не требует остывания
                 self._free.append(proxy)
                 self._cond.notify()
-            else:
-                self._cooling_down[proxy] = time.perf_counter() + holdout
 
 
 class Chain:
@@ -397,24 +402,33 @@ class Chain:
     Не является потокобезопасным.
     """
 
-    def __init__(self, proxies, proxy_gw=None):
+    pool_acquire_timeout = 5
+
+    def __init__(self, proxies, proxy_gw=None, use_pool=False):
         """
         @param proxies: список адресов прокси-серверов
         @param proxy_gw: прокси-сервер, который должен стоять во главе цепочки
          (все запросы к другим прокси-серверам будут проходить через него)
         """
-
         if not isinstance(proxies, Proxies) and isinstance(proxies, collections.Sequence):
             proxies = Proxies(proxies)
+
+        if use_pool:
+            pool = proxies.get_pool()
+        else:
+            pool = None
 
         self.proxies = proxies
         self.proxy_gw = proxy_gw
 
-        self._proxies_pool = self.proxies.get_pool()
-        self._path = self._build_path(self._proxies_pool.acquire())
+        self._proxies_pool = pool
+        self._current_pool_proxy = None
+
+        self.__path = []
 
     def __del__(self):
-        self._proxies_pool.release(self._path[-1])
+        if self._proxies_pool is not None:
+            self._release_pool_proxy()
 
     def _build_path(self, proxy):
         path = []
@@ -426,9 +440,38 @@ class Chain:
 
         return path
 
-    def switch(self, bad=False, holdout=None):
-        self._proxies_pool.release(self._path[-1], bad=bad, holdout=holdout)
-        self._path = self._build_path(self._proxies_pool.acquire())
+    def _release_pool_proxy(self, bad=False, holdout=None):
+        if self._current_pool_proxy:
+            proxy = self._current_pool_proxy
+
+            self._current_pool_proxy = None
+            self._proxies_pool.release(proxy, bad=bad, holdout=holdout)
+
+    def _acquire_pool_proxy(self):
+        proxy = self._proxies_pool.acquire(timeout=self.pool_acquire_timeout)
+        self._current_pool_proxy = proxy
+        return proxy
+
+    def _get_proxy(self):
+        if self._proxies_pool is not None:
+            return self._acquire_pool_proxy()
+        else:
+            return self.proxies.get_random_address()
+
+    @property
+    def _path(self):
+        if not self.__path:
+            self.__path = self._build_path(self._get_proxy())
+        return self.__path
+
+    def switch(self, bad=False, holdout=None, lazy=False):
+        self.__path.clear()
+
+        if self._proxies_pool is not None:
+            self._release_pool_proxy(bad, holdout)
+
+        if not lazy:
+            self.__path = self._build_path(self._get_proxy())
 
     def get_adapter(self):
         import socks.adapters

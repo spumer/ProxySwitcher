@@ -10,7 +10,7 @@ class _RequestsClient:
         self.proxy_chain = proxy_chain
         self.default_headers = default_headers_
 
-        self.session = self._new_sess()
+        self._session = None
 
     def _make_default_headers(self):
         return {
@@ -28,13 +28,23 @@ class _RequestsClient:
 
         return session
 
-    def switch_session(self, bad=False, holdout=None):
-        if self.proxy_chain:
-            self.proxy_chain.switch(bad=bad, holdout=holdout)
+    @property
+    def session(self):
+        if self._session is None or getattr(self._session, '_proxy_sw_closed', False):
+            self._session = self._new_sess()
+        return self._session
 
+    def switch_session(self, bad=False, holdout=None):
         old_session = self.session
-        self.session = self._new_sess()
-        old_session.close()
+        try:
+            if self.proxy_chain:
+                self.proxy_chain.switch(bad=bad, holdout=holdout)
+
+            self._session = self._new_sess()
+        finally:
+            # original requests session does not have `closed` attr
+            old_session._proxy_sw_closed = True
+            old_session.close()
 
 
 class Client(_RequestsClient):
