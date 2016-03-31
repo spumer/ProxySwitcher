@@ -68,16 +68,12 @@ class Proxies(collections.abc.Sequence):
         blacklist_filename = options.get('blacklist')
         if blacklist_filename:
             blacklist = json_dict.JsonLastUpdatedOrderedDict(filename=blacklist_filename, auto_save=True)
-            for proxy in _get_missing(blacklist, proxies or ()):
-                blacklist.pop(proxy)
         else:
             blacklist = json_dict.LastUpdatedOrderedDict()
 
         cooldown_filename = options.get('cooldown')
         if cooldown_filename:
             cooling_down = json_dict.JsonOrderedDict(filename=cooldown_filename, auto_save=True)
-            for proxy in _get_missing(cooling_down, proxies or ()):
-                cooling_down.pop(proxy)
         else:
             cooling_down = collections.OrderedDict()
 
@@ -99,6 +95,10 @@ class Proxies(collections.abc.Sequence):
         self._modified_at = time.perf_counter()
 
         self.__pool = None
+
+        if self._proxies is not None:
+            self._cleanup_blacklist(self._proxies)
+            self._cleanup_cooling_down(self._proxies)
 
     @property
     def proxies(self):
@@ -140,7 +140,18 @@ class Proxies(collections.abc.Sequence):
                 for proxy in proxies
             ]
 
+        self._cleanup_blacklist(proxies)
+        self._cleanup_cooling_down(proxies)
+
         return proxies
+
+    def _cleanup_cooling_down(self, proxies):
+        for proxy in _get_missing(self._cooling_down, proxies):
+            self._cooling_down.pop(proxy)
+
+    def _cleanup_blacklist(self, proxies):
+        for proxy in _get_missing(self._blacklist, proxies):
+            self._blacklist.pop(proxy)
 
     @classmethod
     def read_string(cls, string, sep=','):
@@ -396,13 +407,14 @@ class Chain:
     Не является потокобезопасным.
     """
 
-    pool_acquire_timeout = 5
-
-    def __init__(self, proxies, proxy_gw=None, use_pool=False):
+    def __init__(self, proxies, proxy_gw=None, use_pool=False, pool_acquire_timeout=None):
         """
         @param proxies: список адресов прокси-серверов
         @param proxy_gw: прокси-сервер, который должен стоять во главе цепочки
          (все запросы к другим прокси-серверам будут проходить через него)
+        @param use_pool: использовать список прокси в качестве пула
+        @param pool_acquire_timeout (сек.): если за указанный период не удастся получить свободный прокси
+         будет брошено исключение `NoFreeProxies`, None - ждать до появления свободного адреса
         """
         if not isinstance(proxies, Proxies) and isinstance(proxies, collections.Sequence):
             proxies = Proxies(proxies)
@@ -417,6 +429,7 @@ class Chain:
 
         self._proxies_pool = pool
         self._current_pool_proxy = None
+        self._pool_acquire_timeout = pool_acquire_timeout
 
         self.__path = []
 
@@ -442,7 +455,7 @@ class Chain:
             self._proxies_pool.release(proxy, bad=bad, holdout=holdout, bad_reason=bad_reason)
 
     def _acquire_pool_proxy(self):
-        proxy = self._proxies_pool.acquire(timeout=self.pool_acquire_timeout)
+        proxy = self._proxies_pool.acquire(timeout=self._pool_acquire_timeout)
         self._current_pool_proxy = proxy
         return proxy
 
