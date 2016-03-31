@@ -68,12 +68,16 @@ class Proxies(collections.abc.Sequence):
         blacklist_filename = options.get('blacklist')
         if blacklist_filename:
             blacklist = json_dict.JsonLastUpdatedOrderedDict(filename=blacklist_filename, auto_save=True)
+            for proxy in _get_missing(blacklist, proxies or ()):
+                blacklist.pop(proxy)
         else:
             blacklist = json_dict.LastUpdatedOrderedDict()
 
         cooldown_filename = options.get('cooldown')
         if cooldown_filename:
             cooling_down = json_dict.JsonOrderedDict(filename=cooldown_filename, auto_save=True)
+            for proxy in _get_missing(cooling_down, proxies or ()):
+                cooling_down.pop(proxy)
         else:
             cooling_down = collections.OrderedDict()
 
