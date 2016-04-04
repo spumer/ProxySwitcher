@@ -50,8 +50,17 @@ class _RequestsClient:
 class Client(_RequestsClient):
     def __init__(
         self, ssl_verify=True, timeout=10, apparent_encoding=None,
-        raise_for_conn_problem=True, request_logging=True, log=None, **kw
+        raise_conn_problem=True, raise_for_status=False,
+        request_logging=True, log=None, **kw
     ):
+        """
+        @param ssl_verify: (см. Session.request)
+        @param timeout: (см. Session.request)
+        @param apparent_encoding: кодировка (предполагаемая) по умолчанию
+        @param raise_for_status: надо ли вызывать resp.raise_for_status при получении ответа
+        @param request_logging: включено/выключено логирование запросов
+        @param log: logging.Logger для логирования служебных сообщений
+        """
         # _new_sess override require
         self._request_logging = request_logging
         self._log = log
@@ -61,7 +70,9 @@ class Client(_RequestsClient):
         self.ssl_verify = ssl_verify
         self.timeout = timeout
         self.apparent_encoding = apparent_encoding
-        self.raise_for_conn_problem = raise_for_conn_problem
+
+        self._raise_conn_problem = raise_conn_problem
+        self._raise_for_status = raise_for_status
 
     def _new_sess(self):
         session = super()._new_sess()
@@ -99,12 +110,20 @@ class Client(_RequestsClient):
 
         self._update_params_defaults(kw)
 
-        with conn_problem_detector():
+        def _request():
             resp = self.session.request(
                 method, url, headers=headers, data=data, **kw
             )
-            if self.raise_for_conn_problem:
+            if self._raise_for_status:
                 resp.raise_for_status()
+
+            return resp
+
+        if self._raise_conn_problem:
+            with conn_problem_detector():
+                resp = _request()
+        else:
+            resp = _request()
 
         self._setdefault_resp_encoding(resp)
         return resp
