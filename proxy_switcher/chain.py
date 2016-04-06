@@ -40,7 +40,7 @@ def _get_missing(target, source):
     return old_target.difference(new_target)
 
 
-class Proxies(collections.abc.Sequence):
+class Proxies:
     def __init__(
         self,
         proxies=None,
@@ -126,14 +126,6 @@ class Proxies(collections.abc.Sequence):
                     self._modified_at = time.perf_counter()
 
         return self._proxies
-
-    def __getitem__(self, item):
-        self._auto_refresh()
-        return self.proxies[item]
-
-    def __len__(self):
-        self._auto_refresh()
-        return len(self.proxies)
 
     def _load(self):
         if self.proxies_url:
@@ -312,8 +304,13 @@ class _Pool:
         self._used = set()
         self._cond = threading.Condition()
 
-        # более оптимальный способ заполнения, используется только для инициализации
-        self._free = collections.deque(proxies.proxies)
+        self._free = collections.deque(
+            p for p in proxies.proxies
+            if (
+                p not in blacklist and
+                p not in cooling_down
+            )
+        )
 
         self._proxies = proxies
         self._cooling_down = cooling_down
@@ -344,12 +341,13 @@ class _Pool:
                 self._free.append(proxy)
 
     def _is_proxies_changed(self):
+        self._proxies._auto_refresh()
         return self._proxies._modified_at != self._proxies_modified_at
 
     def _remove_outdated(self):
         # список прокси изменился, оставляем только актуальные
 
-        full_list = set(self._proxies)
+        full_list = set(self._proxies.proxies)
 
         for proxy in _get_missing(self._blacklist, full_list):
             self._blacklist.pop(proxy)
