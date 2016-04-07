@@ -128,8 +128,26 @@ class Client(_RequestsClient):
         self._setdefault_resp_encoding(resp)
         return resp
 
-    def get(self, url, **kw):
-        return self.request('GET', url, **kw)
+    def get(self, url, **kwargs):
+        kwargs.setdefault('allow_redirects', True)
+        return self.request('GET', url, **kwargs)
 
-    def post(self, url, **kw):
-        return self.request('POST', url, **kw)
+    def post(self, url, data=None, json=None, **kwargs):
+        return self.request('POST', url, data=data, json=json, **kwargs)
+
+    def options(self, url, **kwargs):
+        kwargs.setdefault('allow_redirects', True)
+        return self.request('OPTIONS', url, **kwargs)
+
+    def head(self, url, **kwargs):
+        kwargs.setdefault('allow_redirects', False)
+        return self.request('HEAD', url, **kwargs)
+
+    def put(self, url, data=None, **kwargs):
+        return self.request('PUT', url, data=data, **kwargs)
+
+    def patch(self, url, data=None, **kwargs):
+        return self.request('PATCH', url,  data=data, **kwargs)
+
+    def delete(self, url, **kwargs):
+        return self.request('DELETE', url, **kwargs)
