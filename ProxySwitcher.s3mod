@@ -5,6 +5,7 @@
 
   <depends>
     <bl_module id="16779777-d6ee-4d93-bd86-83dbd7ce03b4" name="Python"/>
+    <bl_module id="4a8adc3e-4439-4a82-9d8f-995391e820ed" name="requests"/>
     <bl_module id="7f3007e9-f3d1-4789-acc7-231416de7a10" name="socks"/>
   </depends>
 
