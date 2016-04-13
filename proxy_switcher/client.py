@@ -1,6 +1,3 @@
-from . import stats
-
-
 class _RequestsClient:
     def __init__(self, proxy_chain=None, default_headers=None):
         default_headers_ = self._make_default_headers()
@@ -78,6 +75,8 @@ class Client(_RequestsClient):
         session = super()._new_sess()
 
         if self._request_logging:
+            from . import stats
+
             stats.add_session_send_logging(session, log=self._log)
             if self._log is not None:
                 self._log.info(
