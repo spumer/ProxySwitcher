@@ -12,7 +12,6 @@ import concurrent.futures
 import sql
 import exc_matcher
 import _УтилитыSbis
-import socks.adapters
 
 
 _boot_time = str(time.time()).replace('.', '')
@@ -68,6 +67,8 @@ class Event:
 
     @staticmethod
     def _extract_session_proxy_addr(session, scheme):
+        import socks.adapters
+
         adapter = session.adapters.get(scheme + '://')
         if adapter is None or not isinstance(adapter, socks.adapters.ChainedProxyHTTPAdapter):
             return None
@@ -78,8 +79,14 @@ class Event:
 
         return proxy.addr
 
-    def as_dict(self):
-        return self._event._asdict()
+    def as_dict(self, sql_safe=False):
+        d = self._event._asdict()
+
+        if sql_safe:
+            if isinstance(d['data'], collections.abc.ByteString):
+                d['data'] = str(d['data'])
+
+        return d
 
     def unwrap(self):
         return self._event
@@ -135,7 +142,7 @@ class Event:
 
         sql.update(
             '_proxy_switcher_log',
-            params=self.as_dict(),
+            params=self.as_dict(sql_safe=True),
             where={'@_proxy_switcher_log': self._event_pk}
         )
 
@@ -154,7 +161,7 @@ class Event:
              {data}, {headers}, {ret_code}, {exc_type}, {exc_msg}, {proxy}, {created_at}, {switch}
             ) RETURNING "@_proxy_switcher_log"
             ''',
-            params=self.as_dict(),
+            params=self.as_dict(sql_safe=True),
         )
 
     def create_async(self):
