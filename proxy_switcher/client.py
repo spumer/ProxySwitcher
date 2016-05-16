@@ -1,3 +1,33 @@
+import cgi
+
+
+def get_encoding_from_headers(headers, rfc2616_missing_charset=None):
+    """Returns encodings from given HTTP Header Dict.
+
+    @param headers: dictionary to extract encoding from.
+    @param rfc2616_missing_charset: use this encoding for text content by default
+     if not set will be used ISO-8859-1
+    """
+
+    content_type = headers.get('content-type')
+
+    if not content_type:
+        return None
+
+    content_type, params = cgi.parse_header(content_type)
+
+    if 'charset' in params:
+        return params['charset'].strip("'\"")
+
+    if 'text' in content_type:
+        if rfc2616_missing_charset is None:
+            rfc2616_missing_charset = 'ISO-8859-1'
+
+        return rfc2616_missing_charset
+
+    return None
+
+
 class _RequestsClient:
     def __init__(self, proxy_chain=None, default_headers=None):
         default_headers_ = self._make_default_headers()
@@ -46,7 +76,7 @@ class _RequestsClient:
 
 class Client(_RequestsClient):
     def __init__(
-        self, ssl_verify=True, timeout=10, apparent_encoding=None,
+        self, ssl_verify=True, timeout=10, apparent_encoding=None, rfc2616_missing_charset=False,
         raise_conn_problem=True, raise_for_status=False,
         request_logging=True, log=None, **kw
     ):
@@ -54,6 +84,8 @@ class Client(_RequestsClient):
         @param ssl_verify: (см. Session.request)
         @param timeout: (см. Session.request)
         @param apparent_encoding: кодировка (предполагаемая) по умолчанию
+        @param rfc2616_missing_charset: True - использовать кодировку по умолчанию согласно rfc2616,
+            False - `apparent_encoding` по возможности
         @param raise_for_status: надо ли вызывать resp.raise_for_status при получении ответа
         @param request_logging: включено/выключено логирование запросов
         @param log: logging.Logger для логирования служебных сообщений
@@ -67,6 +99,7 @@ class Client(_RequestsClient):
         self.ssl_verify = ssl_verify
         self.timeout = timeout
         self.apparent_encoding = apparent_encoding
+        self.rfc2616_missing_charset = rfc2616_missing_charset
 
         self._raise_conn_problem = raise_conn_problem
         self._raise_for_status = raise_for_status
@@ -88,7 +121,9 @@ class Client(_RequestsClient):
         return session
 
     def _setdefault_resp_encoding(self, resp):
-        if resp.encoding is None:
+        if not self.rfc2616_missing_charset:
+            resp.encoding = get_encoding_from_headers(resp.headers, self.apparent_encoding)
+        elif resp.encoding is None:
             resp.encoding = self.apparent_encoding
 
     def _update_params_defaults(self, params):
