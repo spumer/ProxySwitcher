@@ -101,6 +101,7 @@ class Proxies:
         self._stats = stats
         self._smart_holdout_start = options.get('smart_holdout_start')
         self._smart_holdout_min = options.get('smart_holdout_min')
+        self._cleanup_lock = threading.RLock()
 
         self._last_auto_refresh = None
         self._auto_refresh_lock = threading.Lock()
@@ -123,6 +124,7 @@ class Proxies:
                 # Вышли из состояния гонки, теперь можно удостовериться в реальной необходимости
                 if self._proxies is None:
                     self._proxies = self._load()
+                    self._cleanup_internals(self._proxies)
                     self._modified_at = time.perf_counter()
 
         return self._proxies
@@ -148,14 +150,16 @@ class Proxies:
                 for proxy in proxies
             ]
 
-        self._cleanup_blacklist(proxies)
-        self._cleanup_cooling_down(proxies)
-        self._cleanup_stats(proxies)
-
         if self._shuffle:
             random.shuffle(proxies)
 
         return proxies
+
+    def _cleanup_internals(self, proxies):
+        with self._cleanup_lock:
+            self._cleanup_blacklist(proxies)
+            self._cleanup_cooling_down(proxies)
+            self._cleanup_stats(proxies)
 
     def _cleanup_cooling_down(self, proxies):
         for proxy in _get_missing(self._cooling_down, proxies):
@@ -207,6 +211,7 @@ class Proxies:
 
         try:
             self._proxies = self._load()
+            self._cleanup_internals(self._proxies)
         except urllib.error.HTTPError:
             import problems
             problems.handle(ProxyURLRefreshError, extra={'url': self.proxies_url})
@@ -244,10 +249,10 @@ class Proxies:
     def get_pool(self):
         if self.__pool is None:
             if self._smart_holdout_start is None:
-                self.__pool = _Pool(self, self._cooling_down, self._blacklist, self._stats)
+                self.__pool = _Pool(self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock)
             else:
                 self.__pool = _Pool(
-                    self, self._cooling_down, self._blacklist, self._stats,
+                    self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock,
                     smart_holdout=True, smart_holdout_start=self._smart_holdout_start,
                     smart_holdout_min=self._smart_holdout_min,
                 )
@@ -294,7 +299,7 @@ class Proxies:
 
 class _Pool:
     def __init__(
-            self, proxies: "`Proxies` instance", cooling_down, blacklist, stats,
+            self, proxies: "`Proxies` instance", cooling_down, blacklist, stats, _cleanup_lock=None,
             smart_holdout=False, smart_holdout_start=None, smart_holdout_min=None,
     ):
         if smart_holdout:
@@ -302,7 +307,7 @@ class _Pool:
                 raise RuntimeError("Вы должны указать начальное время охлаждения")
 
         self._used = set()
-        self._cond = threading.Condition()
+        self._cond = threading.Condition(lock=_cleanup_lock)
 
         self._free = collections.deque(
             p for p in proxies.proxies
@@ -336,7 +341,7 @@ class _Pool:
                 cooled.append(proxy)
 
         for proxy in cooled:
-            self._cooling_down.pop(proxy, None)
+            self._cooling_down.pop(proxy)
             if proxy not in self._blacklist:
                 self._free.append(proxy)
 
@@ -350,16 +355,16 @@ class _Pool:
         full_list = set(self._proxies.proxies)
 
         for proxy in _get_missing(self._blacklist, full_list):
-            self._blacklist.pop(proxy, None)
+            self._blacklist.pop(proxy)
 
         for proxy in _get_missing(self._cooling_down, full_list):
-            self._cooling_down.pop(proxy, None)
+            self._cooling_down.pop(proxy)
 
         for proxy in _get_missing(self._used, full_list):
             self._used.remove(proxy)
 
         for proxy in _get_missing(self._stats, full_list):
-            self._stats.pop(proxy, None)
+            self._stats.pop(proxy)
 
         free = set(
             p for p in full_list
