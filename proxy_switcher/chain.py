@@ -341,7 +341,7 @@ class _Pool:
                 cooled.append(proxy)
 
         for proxy in cooled:
-            self._cooling_down.pop(proxy, None)
+            self._cooling_down.pop(proxy)
             if proxy not in self._blacklist:
                 self._free.append(proxy)
 
@@ -355,16 +355,16 @@ class _Pool:
         full_list = set(self._proxies.proxies)
 
         for proxy in _get_missing(self._blacklist, full_list):
-            self._blacklist.pop(proxy, None)
+            self._blacklist.pop(proxy)
 
         for proxy in _get_missing(self._cooling_down, full_list):
-            self._cooling_down.pop(proxy, None)
+            self._cooling_down.pop(proxy)
 
         for proxy in _get_missing(self._used, full_list):
             self._used.remove(proxy)
 
         for proxy in _get_missing(self._stats, full_list):
-            self._stats.pop(proxy, None)
+            self._stats.pop(proxy)
 
         free = set(
             p for p in full_list
@@ -467,7 +467,7 @@ class _Pool:
                     ), None)
 
                     if proxy is not None:
-                        self._blacklist.pop(proxy, None)
+                        self._blacklist.pop(proxy)
                         self._used.add(proxy)
                         return proxy
                     else:
