@@ -248,14 +248,17 @@ class Proxies:
 
     def get_pool(self):
         if self.__pool is None:
-            if self._smart_holdout_start is None:
-                self.__pool = _Pool(self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock)
-            else:
-                self.__pool = _Pool(
-                    self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock,
-                    smart_holdout=True, smart_holdout_start=self._smart_holdout_start,
-                    smart_holdout_min=self._smart_holdout_min,
-                )
+            with self._cleanup_lock:  # оптимизация: используем уже существующий лок
+                # Вышли из состояния гонки, теперь можно удостовериться в реальной необходимости
+                if self.__pool is None:
+                    if self._smart_holdout_start is None:
+                        self.__pool = _Pool(self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock)
+                    else:
+                        self.__pool = _Pool(
+                            self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock,
+                            smart_holdout=True, smart_holdout_start=self._smart_holdout_start,
+                            smart_holdout_min=self._smart_holdout_min,
+                        )
         return self.__pool
 
     @classmethod
