@@ -99,8 +99,6 @@ class Proxies:
         self._blacklist = blacklist
         self._cooling_down = cooling_down
         self._stats = stats
-        self._smart_holdout_start = options.get('smart_holdout_start')
-        self._smart_holdout_min = options.get('smart_holdout_min')
         self._cleanup_lock = threading.RLock()
 
         self._last_auto_refresh = None
@@ -110,6 +108,9 @@ class Proxies:
         self._modified_at = time.perf_counter()
 
         self.__pool = None
+        self._smart_holdout_start = options.get('smart_holdout_start')
+
+        self._options = options
 
         if self._proxies is not None:
             proxies = set(self._proxies)
@@ -172,6 +173,12 @@ class Proxies:
     def _cleanup_stats(self, proxies):
         for proxy in _get_missing(self._stats, proxies):
             self._stats.pop(proxy)
+
+    def _get_options(self, *options, missing_ok=True):
+        if missing_ok:
+            return {k: self._options.get(k) for k in options}
+        else:
+            return {k: self._options[k] for k in options}
 
     @classmethod
     def read_string(cls, string, sep=','):
@@ -251,14 +258,18 @@ class Proxies:
             with self._cleanup_lock:  # оптимизация: используем уже существующий лок
                 # Вышли из состояния гонки, теперь можно удостовериться в реальной необходимости
                 if self.__pool is None:
-                    if self._smart_holdout_start is None:
-                        self.__pool = _Pool(self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock)
-                    else:
-                        self.__pool = _Pool(
-                            self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock,
-                            smart_holdout=True, smart_holdout_start=self._smart_holdout_start,
-                            smart_holdout_min=self._smart_holdout_min,
-                        )
+                    options = self._get_options('default_holdout', 'default_bad_holdout', 'force_defaults')
+
+                    if self._smart_holdout_start is not None:
+                        options['smart_holdout'] = True
+                        options['smart_holdout_start'] = self._smart_holdout_start
+                        options.update(self._get_options('smart_holdout_min', 'smart_holdout_max'))
+
+                    self.__pool = _Pool(
+                        self, self._cooling_down, self._blacklist, self._stats, self._cleanup_lock,
+                        **options
+                    )
+
         return self.__pool
 
     @classmethod
@@ -303,7 +314,8 @@ class Proxies:
 class _Pool:
     def __init__(
             self, proxies: "`Proxies` instance", cooling_down, blacklist, stats, _cleanup_lock=None,
-            smart_holdout=False, smart_holdout_start=None, smart_holdout_min=None,
+            smart_holdout=False, smart_holdout_start=None, smart_holdout_min=None, smart_holdout_max=None,
+            default_holdout=None, default_bad_holdout=None, force_defaults=False,
     ):
         if smart_holdout:
             if smart_holdout_start in (None, 0):
@@ -324,9 +336,15 @@ class _Pool:
         self._cooling_down = cooling_down
         self._blacklist = blacklist
         self._stats = stats
+
         self._smart_holdout = smart_holdout
         self._smart_holdout_start = smart_holdout_start
         self._smart_holdout_min = smart_holdout_min or 0
+        self._smart_holdout_max = smart_holdout_max
+
+        self._default_holdout = default_holdout
+        self._default_bad_holdout = default_bad_holdout
+        self._force_defaults = force_defaults
 
         self._proxies_modified_at = proxies._modified_at
 
@@ -399,39 +417,53 @@ class _Pool:
 
         proxy_stat['uptime'] = ok, fail
         proxy_stat['last_holdout'] = holdout
+        if (
+            not bad or
+            (
+                holdout is not None and
+                holdout >= (proxy_stat.get('last_good_holdout') or 0)
+            )
+        ):
+            proxy_stat['last_good_holdout'] = holdout
 
         # универсальный способ сказать что статистика обновилась
         # тк без вызова метода .save будет работать и с обычным словарем (не только с JsonDict)
         self._stats[proxy] = proxy_stat
 
-    def _get_next_holdout(self, prev_holdout, bad=False):
+    def _get_next_holdout(self, proxy, bad=False):
         """Рассчитывает время охлаждения.
 
-        @param prev_holdout: предыдущее время охлаждения (нижняя граница)
+        @param proxy: прокси, для которого необходимо вычислить
         @param bad: True - вычисляем охлаждение для неудачи, иначе False
-        @return: рекомендуемое время охлаждения в секундах
+        @return: рекомендуемое время охлаждения в секундах или None, если недостаточно данных
         """
 
         # Алгоритм основан на бинарном поиске,
         # в отличии от которого нам не известна верхняя граница
 
-        lo = prev_holdout
+        proxy_stat = self._stats.get(proxy)
+        if proxy_stat is None:
+            return None
+
+        last_holdout = proxy_stat['last_holdout']
+        last_good_holdout = proxy_stat.get('last_good_holdout', 0)
+
+        lo = last_holdout  # предыдущее время охлаждения (нижняя граница)
 
         if bad:
-            holdout = lo * 2
+            # Мы получили "бан" ...
+            if lo < last_good_holdout:
+                # ... возвращаемся к предыдущему хорошему значению ...
+                holdout = last_good_holdout
+            else:
+                # ... или сдвигаем границу дальше
+                holdout = lo * 2
         else:
             # возвращаемся к предыдущей границе (lo / 2)
             # но с небольшим отступом - на середину отрезка [(lo / 2), lo]
             holdout = lo * 0.75
 
         return holdout
-
-    def _get_last_holdout(self, proxy):
-        proxy_stat = self._stats.get(proxy)
-        if proxy_stat is None:
-            return None
-
-        return proxy_stat['last_holdout']
 
     def acquire(self, timeout=None):
         start = time.perf_counter()
@@ -502,9 +534,12 @@ class _Pool:
 
             self._used.remove(proxy)
 
+            if holdout is None or self._force_defaults:
+                holdout = self._default_holdout if not bad else self._default_bad_holdout
+
             if self._smart_holdout:
                 _holdout = (
-                    self._get_last_holdout(proxy) or
+                    self._get_next_holdout(proxy, bad=bad) or
                     holdout or
                     self._smart_holdout_start
                 )
@@ -512,8 +547,9 @@ class _Pool:
                 # Не позволяем границе опуститься слишком низко
                 if _holdout < self._smart_holdout_min:
                     holdout = self._smart_holdout_min
+                elif _holdout > self._smart_holdout_max:
+                    holdout = self._smart_holdout_max
                 else:
-                    _holdout = self._get_next_holdout(_holdout, bad=bad)
                     holdout = max(self._smart_holdout_min, _holdout)
 
             if holdout is not None:
@@ -529,7 +565,24 @@ class _Pool:
             self._update_stats(proxy, bad=bad, holdout=holdout)
 
 
-class Chain:
+class IChain:
+    def switch(self, bad=False, holdout=None, bad_reason=None, lazy=False):
+        raise NotImplementedError
+
+    def get_adapter(self):
+        raise NotImplementedError
+
+    def get_handler(self):
+        raise NotImplementedError
+
+    def wrap_session(self, session):
+        raise NotImplementedError
+
+    def wrap_module(self, module):
+        raise NotImplementedError
+
+
+class Chain(IChain):
     """
     Не является потокобезопасным.
     """
@@ -642,3 +695,79 @@ class Chain:
         proxies = Proxies.from_cfg_string(proxy_cfg_string)
 
         return cls(proxies, proxy_gw=proxy_gw)
+
+
+class MultiChain(IChain):
+    def __init__(self, *proxies_all, use_pool=True, pool_acquire_timeout=None):
+        if use_pool:
+            pool_kw = {'use_pool': True, 'pool_acquire_timeout': 1}
+        else:
+            pool_kw = {}
+
+        self._pool_acquire_timeout = pool_acquire_timeout
+
+        self._chains = collections.deque(
+           Chain(p, gw, **pool_kw)
+           for p, gw in self._unwrap_proxies_all(proxies_all)
+        )
+
+    @staticmethod
+    def _unwrap_proxies_all(proxies_all):
+        for p in proxies_all:
+            if isinstance(p, tuple):
+                # (Proxies, Gateway)
+                p, gw = p
+            else:
+                # Proxies
+                p, gw = p, None
+
+            yield p, gw
+
+    def _self_auto_rotate(func):
+        @functools.wraps(func)
+        def wrapped(self, *args, **kw):
+            start = time.perf_counter()
+            while True:
+                try:
+                    return func(self, *args, **kw)
+                except NoFreeProxies:
+                    self._rotate()  # FIXME: cycle rotate is normal?
+                    if (
+                        self._pool_acquire_timeout is not None and
+                        time.perf_counter() - start > self._pool_acquire_timeout
+                    ):
+                        raise
+        return wrapped
+
+    @property
+    def _current(self):
+        return self._chains[-1]
+
+    def _rotate(self):
+        self._chains.rotate(1)
+
+    def switch(self, bad=False, holdout=None, bad_reason=None, lazy=False):
+        self._current.switch(bad=bad, holdout=holdout, bad_reason=bad_reason, lazy=True)
+        self._rotate()
+        if not lazy:
+            self._enforce_current_path_build()
+
+    @_self_auto_rotate
+    def _enforce_current_path_build(self):
+        _ = self._current._path  # FIXME: ugly enforce path building after switching
+
+    @_self_auto_rotate
+    def get_adapter(self):
+        return self._current.get_adapter()
+
+    @_self_auto_rotate
+    def get_handler(self):
+        return self._current.get_handler()
+
+    @_self_auto_rotate
+    def wrap_session(self, session):
+        return self._current.wrap_session(session)
+
+    @_self_auto_rotate
+    def wrap_module(self, module):
+        return self._current.wrap_module(module)

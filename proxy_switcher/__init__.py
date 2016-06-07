@@ -140,11 +140,18 @@ Pool (пул) прокси:
 
 Тогда по истечении этого времени будет брошено исключение `NoFreeProxies` (см. proxy_switcher.errors)
 
+
+Changelog:
+   1.0.0 - Initial release
+   1.1.0 - Добавлена возможность одновременного использования нескольких пулов - MultiChain;
+   Улучшена работа алгоритма "smart holdout" (+ новая опция 'smart_holdout_max');
+   Добавлены опции: 'default_holdout' и 'default_bad_holdout' для интервала охлаждения по умолчанию
+
 """
 
 
-from .chain import Proxies, Chain, ProxyURLRefreshError
+from .chain import Proxies, Chain, MultiChain, ProxyURLRefreshError
 from .client import Client
 
 
-__version__ = '1.0.0'
+__version__ = '1.1.0'
