@@ -20,7 +20,9 @@ def cfg_get_gateway(cfg, section_name):
     default_gateway = cfg.get_str('Шлюз')
     gateway = cfg.get_section(section_name).get_str('Шлюз', default=missing_gw)
 
-    if gateway is missing_gw:
+    if gateway == 'Нет':
+        gateway = None
+    elif gateway is missing_gw:
         gateway = default_gateway
 
     return gateway
