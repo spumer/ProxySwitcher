@@ -321,6 +321,9 @@ class _Pool:
             if smart_holdout_start in (None, 0):
                 raise RuntimeError("Вы должны указать начальное время охлаждения")
 
+            if smart_holdout_max is None:
+                smart_holdout_max = float('inf')
+
         self._used = set()
         self._cond = threading.Condition(lock=_cleanup_lock)
 
