@@ -575,11 +575,27 @@ class IChain:
     def get_handler(self):
         raise NotImplementedError
 
+    def get_path(self):
+        raise NotImplementedError
+
     def wrap_session(self, session):
         raise NotImplementedError
 
-    def wrap_module(self, module):
-        raise NotImplementedError
+    def wrap_module(self, module, all_threads=False):
+        """
+        Attempts to replace a module's socket library with a SOCKS socket.
+        This will only work on modules that import socket directly into the
+        namespace; most of the Python Standard Library falls into this category.
+        """
+        import socks
+        import socks.monkey_socket
+
+        routes = socks.RoutingTable.from_addresses(self.get_path())
+
+        if not all_threads:
+            socks.monkey_socket.socks_wrap_module_thread(routes, module)
+        else:
+            socks.monkey_socket.socks_wrap_module_global(routes, module)
 
 
 class Chain(IChain):
@@ -651,6 +667,9 @@ class Chain(IChain):
             self.__path = self._build_path(self._get_proxy())
         return self.__path
 
+    def get_path(self):
+        return self._path
+
     def switch(self, bad=False, holdout=None, bad_reason=None, lazy=False):
         self.__path.clear()
 
@@ -673,16 +692,6 @@ class Chain(IChain):
         session.mount('http://', adapter)
         session.mount('https://', adapter)
         return session
-
-    def wrap_module(self, module):
-        """
-        Attempts to replace a module's socket library with a SOCKS socket.
-        This will only work on modules that import socket directly into the
-        namespace; most of the Python Standard Library falls into this category.
-        """
-        import socks
-        routes = socks.RoutingTable.from_addresses(self._path)
-        module.socket.socket = functools.partial(socks.socksocket, routes=routes)
 
     @classmethod
     def from_config(cls, cfg):
@@ -742,6 +751,9 @@ class MultiChain(IChain):
     @property
     def _current(self):
         return self._chains[-1]
+
+    def get_path(self):
+        return self._current.get_path()
 
     def _rotate(self):
         self._chains.rotate(1)
