@@ -17,6 +17,8 @@ import collections.abc
 
 import json_dict
 
+from . import utils
+
 
 class ProxyURLRefreshError(Exception):
     pass
@@ -69,23 +71,9 @@ class Proxies:
         if auto_refresh_period:
             auto_refresh_period = datetime.timedelta(**auto_refresh_period)
 
-        blacklist_filename = options.get('blacklist')
-        if blacklist_filename:
-            blacklist = json_dict.JsonLastUpdatedOrderedDict(filename=blacklist_filename, auto_save=True)
-        else:
-            blacklist = json_dict.LastUpdatedOrderedDict()
-
-        cooldown_filename = options.get('cooldown')
-        if cooldown_filename:
-            cooling_down = json_dict.JsonOrderedDict(filename=cooldown_filename, auto_save=True)
-        else:
-            cooling_down = collections.OrderedDict()
-
-        stats_filename = options.get('stats')
-        if stats_filename:
-            stats = json_dict.JsonDict(filename=stats_filename, auto_save=True)
-        else:
-            stats = {}
+        blacklist = utils.get_json_dict(json_dict.JsonLastUpdatedOrderedDict, filename=options.get('blacklist'))
+        cooling_down = utils.get_json_dict(json_dict.JsonOrderedDict, filename=options.get('cooldown'))
+        stats = utils.get_json_dict(json_dict.JsonDict, filename=options.get('stats'))
 
         self._proxies = proxies
         self.proxies_url = proxies_url
@@ -114,9 +102,7 @@ class Proxies:
 
         if self._proxies is not None:
             proxies = set(self._proxies)
-            self._cleanup_blacklist(proxies)
-            self._cleanup_cooling_down(proxies)
-            self._cleanup_stats(proxies)
+            self._cleanup_internals(proxies)
 
     @property
     def proxies(self):
