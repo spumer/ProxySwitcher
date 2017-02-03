@@ -2,11 +2,13 @@
 
 import os
 import re
+import sys
 import gzip
 import time
 import json
 import socket
 import random
+import weakref
 import datetime
 import functools
 import threading
@@ -618,7 +620,14 @@ class Chain(IChain):
 
         self.__path = []
 
+        if sys.version_info >= (3, 4, 0):
+            self.finalizer = weakref.finalize(self, self.finalize)
+
     def __del__(self):
+        if sys.version_info < (3, 4, 0):
+            self.finalize()
+
+    def finalize(self):
         if self._proxies_pool is not None:
             self._release_pool_proxy()
 
