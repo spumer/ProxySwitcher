@@ -620,11 +620,14 @@ class Chain(IChain):
 
         self.__path = []
 
+        # fix http://bugs.python.org/issue23841
         if sys.version_info >= (3, 4, 0):
             self.finalizer = weakref.finalize(self, self.finalize)
+        else:
+            self.finalizer = None
 
     def __del__(self):
-        if sys.version_info < (3, 4, 0):
+        if self.finalizer is None:
             self.finalize()
 
     def finalize(self):
