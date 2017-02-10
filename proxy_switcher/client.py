@@ -76,7 +76,7 @@ class _RequestsClient:
 
 class Client(_RequestsClient):
     def __init__(
-        self, ssl_verify=True, timeout=10, apparent_encoding=None, rfc2616_missing_charset=False,
+        self, ssl_verify=False, timeout=10, apparent_encoding=None, rfc2616_missing_charset=False,
         raise_conn_problem=True, raise_for_status=False,
         request_logging=True, log=None, **kw
     ):
