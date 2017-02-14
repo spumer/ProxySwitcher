@@ -26,6 +26,12 @@
     * По ссылке:
     proxies = proxy_switcher.chain.Proxies(proxies_url='http://proxy-list.example.com')
 
+    * По ссылке через proxy:
+    proxies = proxy_switcher.chain.Proxies(
+        proxies_url='http://proxy-list.example.com',
+        proxies_url_gateway='http://proxy.example.com'
+    )
+
     * Из json (подробнее см. описание метода)
     proxies = proxy_switcher.chain.Proxies.from_cfg_string('''{
         "list": ["proxy-server.com:8080"]

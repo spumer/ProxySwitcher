@@ -14,6 +14,7 @@ import functools
 import threading
 import collections
 import urllib.error
+import urllib.parse
 import urllib.request
 import collections.abc
 
@@ -44,11 +45,23 @@ def _get_missing(target, source):
     return old_target.difference(new_target)
 
 
+def _build_opener(proxy=None):
+    if proxy is not None:
+        parsed = urllib.parse.urlparse(proxy)
+        handler = urllib.request.ProxyHandler({parsed.scheme: proxy})
+        return urllib.request.build_opener(handler)
+    else:
+        return urllib.request.build_opener()
+
+
 class Proxies:
+    default_opener = _build_opener()
+
     def __init__(
         self,
         proxies=None,
         proxies_url=None,
+        proxies_url_gateway=None,
         proxies_file=None,
         options=None,
     ):
@@ -76,6 +89,13 @@ class Proxies:
         blacklist = utils.get_json_dict(json_dict.JsonLastUpdatedOrderedDict, filename=options.get('blacklist'))
         cooling_down = utils.get_json_dict(json_dict.JsonOrderedDict, filename=options.get('cooldown'))
         stats = utils.get_json_dict(json_dict.JsonDict, filename=options.get('stats'))
+
+        if proxies_url_gateway:
+            url_opener = _build_opener(proxies_url_gateway)
+        else:
+            url_opener = None
+
+        self._url_opener = url_opener
 
         self._proxies = proxies
         self.proxies_url = proxies_url
@@ -120,7 +140,7 @@ class Proxies:
 
     def _load(self):
         if self.proxies_url:
-            proxies = self.read_url(self.proxies_url)
+            proxies = self.read_url(self.proxies_url, opener=self._url_opener)
         elif self.proxies_file:
             proxies = self.read_file(self.proxies_file)
         else:
@@ -173,10 +193,13 @@ class Proxies:
         return list(x for x in map(str.strip, string.split(sep)) if x)
 
     @classmethod
-    def read_url(cls, url, sep='\n', retry=10, sleep_range=(2, 10), timeout=2):
+    def read_url(cls, url, sep='\n', retry=10, sleep_range=(2, 10), timeout=2, opener=None):
+        if opener is None:
+            opener = cls.default_opener
+
         while True:
             try:
-                resp = urllib.request.urlopen(url, timeout=timeout)
+                resp = opener.open(url, timeout=timeout)
                 break
             except (urllib.error.HTTPError, socket.timeout):
                 if not retry:
@@ -276,6 +299,9 @@ class Proxies:
             auto_refresh_period (dict): {'days': ..., 'hours': ..., 'minutes': ...}
             как часто необходимо обновлять список прокси-серверов (только для `url` и `file`)
 
+            url_gateway:
+            адрес proxy, через которые будет загружаться список прокси по url
+
             (url, file, list) - может быть именем файла, ссылкой или списком в формате json
 
             Параметры slice и force_type являются необязательными
@@ -286,16 +312,22 @@ class Proxies:
             option = {"file": "./my_new_proxies.txt", "type": "socks5"}
             option = {"url": "http://example.com/get/proxy_list/", "slice": [35, null], "type": "http"}
             option = {"url": "http://example.com/get/proxy_list/", "auto_refresh_period": {"days": 1}}
+            option = {"url": "http://example.com/get/proxy_list/", "url_gateway": "http://proxy.example.com:9999"}
         """
 
         cfg = json.loads(cfg_string)
 
         proxies = cfg.pop('list', None)
         proxies_url = cfg.pop('url', None)
+        proxies_url_gateway = cfg.pop('url_gateway', None)
         proxies_file = cfg.pop('file', None)
 
         return cls(
-            proxies=proxies, proxies_url=proxies_url, proxies_file=proxies_file, options=cfg
+            proxies=proxies,
+            proxies_url=proxies_url,
+            proxies_url_gateway=proxies_url_gateway,
+            proxies_file=proxies_file,
+            options=cfg
         )
 
 
