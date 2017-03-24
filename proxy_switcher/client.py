@@ -1,4 +1,5 @@
 import cgi
+import warnings
 
 
 def get_encoding_from_headers(headers, rfc2616_missing_charset=None):
@@ -78,7 +79,7 @@ class Client(_RequestsClient):
     def __init__(
         self, ssl_verify=False, timeout=10, apparent_encoding=None, rfc2616_missing_charset=False,
         raise_conn_problem=True, raise_for_status=False,
-        request_logging=True, log=None, **kw
+        request_logger=None, **kw
     ):
         """
         @param ssl_verify: (см. Session.request)
@@ -87,12 +88,26 @@ class Client(_RequestsClient):
         @param rfc2616_missing_charset: True - использовать кодировку по умолчанию согласно rfc2616,
             False - `apparent_encoding` по возможности
         @param raise_for_status: надо ли вызывать resp.raise_for_status при получении ответа
-        @param request_logging: включено/выключено логирование запросов
-        @param log: logging.Logger для логирования служебных сообщений
+        @param request_logger: request_logging.Logger для логирования запросов
         """
+        if 'request_logging' in kw:
+            kw.pop('request_logging', None)
+            warnings.warn(
+                "`request_logging` flag has no effect and will be removed. "
+                "To logging your requests use `request_logger` parameter",
+                DeprecationWarning,
+            )
+
+        if 'log' in kw:
+            kw.pop('log', None)
+            warnings.warn(
+                "`log` parameter has no effect and will be removed. "
+                "To logging your requests use `request_logger` parameter",
+                DeprecationWarning,
+            )
+
         # _new_sess override require
-        self._request_logging = request_logging
-        self._log = log
+        self._request_logger = request_logger
 
         super().__init__(**kw)
 
@@ -107,16 +122,9 @@ class Client(_RequestsClient):
     def _new_sess(self):
         session = super()._new_sess()
 
-        if self._request_logging:
-            from . import stats
-
-            stats.add_session_send_logging(session, log=self._log)
-            if self._log is not None:
-                self._log.info(
-                    "New session started: session=%r" % stats.get_session_ident(
-                        session
-                    )
-                )
+        if self._request_logger:
+            from . import request_logging
+            request_logging.add_session_send_logging(session, logger=self._request_logger)
 
         return session
 
@@ -131,11 +139,8 @@ class Client(_RequestsClient):
         params.setdefault('verify', self.ssl_verify)
 
     def switch_session(self, bad=False, holdout=None, bad_reason=None):
-        if self._request_logging:
-            event = getattr(self.session, '__last_request_event', None)
-            if event is not None:
-                event.replace(switch=True)
-                event.update_async()
+        if self._request_logger:
+            self._request_logger.before_switch_session(session=self)
 
         super().switch_session(bad=bad, holdout=holdout, bad_reason=bad_reason)
 

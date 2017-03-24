@@ -93,11 +93,23 @@
     # Пересоздаем, тк пока нет другого способа
     opener = _build_opener()
 
-Логирование запросов (включено по умолчанию):
-Вся информация о запросе будет записываться в фоне в отдельную таблицу "_proxy_switcher_log"
-Чтобы отключить логирование необходимо явно передать ключ:
+Логирование запросов:
+Вся информация о запросе будет передана в специальный объект, в котором вы можете обработать запрос
+Чтобы включить логирование необходимо явно передать "логгер":
+    import proxy_switcher.request_logging
 
-    client = proxy_switcher.client.Client(request_logging=False)
+    class MyLogger(proxy_switcher.request_logging.Logger):
+        def __init__(self, log):
+            self._log = log
+
+        def send(self, session, request, resp=None, exc_info=None):
+            if resp is not None:
+                self._log.info("Запрос выполнен: status_code=%r" % resp.status_code)
+            else:
+                self._log.warning("Запрос не выполнен!", exc_info=exc_info)
+
+    log = logging.getLogger('MyLogger')
+    client = proxy_switcher.client.Client(request_logger=MyLogger(log))
 
 
 Pool (пул) прокси:
