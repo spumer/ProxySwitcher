@@ -1,0 +1,18 @@
+﻿<?xml version="1.0" encoding="UTF-8" ?>
+<bl_module id="824ba69f-351a-460a-b85d-f8f2af76465a" name="ProxySwitcher" package="common" responsible="Посохин С.Д." version="1.00">
+
+  <description/>
+
+  <depends>
+    <bl_module id="16779777-d6ee-4d93-bd86-83dbd7ce03b4" name="Python"/>
+    <bl_module id="4a8adc3e-4439-4a82-9d8f-995391e820ed" name="requests"/>
+    <bl_module id="7f3007e9-f3d1-4789-acc7-231416de7a10" name="socks"/>
+  </depends>
+
+  <load_after/>
+
+  <parameters/>
+
+  <resources/>
+
+</bl_module>
